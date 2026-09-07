@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能家居环境中心</title>
+  <script src="https://cdn.staticfile.org/echarts/5.4.3/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #eef1f6;
+      --card: #ffffff;
+      --text: #2b3a4a;
+      --muted: #8a97a8;
+      --primary: #3b6fe0;
+      --radius: 16px;
+      --shadow: 0 4px 16px rgba(30, 50, 80, .08);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+      background: var(--bg); color: var(--text); padding: 24px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(120deg, #3b6fe0, #5b8def);
+      color: #fff; border-radius: var(--radius); padding: 22px 28px;
+      box-shadow: var(--shadow); margin-bottom: 20px;
+    }
+    .header h1 { font-size: 24px; font-weight: 600; letter-spacing: 1px; }
+    .header .sub { font-size: 13px; opacity: .85; margin-top: 4px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #4ade80; margin-right: 6px; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.35} }
+    .alarm-banner { background: #e03131; color: #fff; text-align: center; padding: 12px 20px; border-radius: 12px; font-size: 16px; font-weight: 600; margin-bottom: 16px; box-shadow: var(--shadow); animation: pulse 1s infinite; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .card {
+      background: var(--card); border-radius: var(--radius); padding: 20px;
+      box-shadow: var(--shadow); text-align: center; position: relative; overflow: hidden;
+      transition: transform .18s;
+    }
+    .card:hover { transform: translateY(-3px); }
+    .card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
+    .card.c-temp::before { background: #e8590c; }
+    .card.c-hum::before  { background: #1c7ed6; }
+    .card.c-light::before{ background: #f59f00; }
+    .card.c-dist::before { background: #7048e8; }
+    .card.c-lamp::before { background: #2f9e44; }
+    .card.c-auto::before { background: #0ca678; }
+    .card.c-fan::before  { background: #15aabf; }
+    .card .label { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .card .value { font-size: 32px; font-weight: 700; }
+    .card .unit { font-size: 14px; color: var(--muted); margin-left: 2px; font-weight: 400; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: var(--card); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+    .chart { width: 100%; height: 240px; }
+
+    .voice { grid-column: 1 / -1; }
+    .voice .title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--primary); }
+    .voice .hint { font-size: 12px; color: var(--muted); margin-bottom: 12px; padding: 8px 12px; background: #f5f7fa; border-radius: 8px; line-height: 1.6; }
+    .voice .row { display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-start; }
+    .voice .tag { flex-shrink: 0; font-size: 12px; padding: 3px 12px; border-radius: 20px; color: #fff; }
+    .tag.asr { background: #3b6fe0; }
+    .tag.reply { background: #2f9e44; }
+    .voice .msg { font-size: 15px; line-height: 1.5; }
+    .voice .empty { color: var(--muted); font-size: 14px; }
+    .vtime { color: #8a97a8; font-size: 12px; }
+    #voice-body { max-height: 300px; overflow-y: auto; padding-right: 4px; }
+
+    .ctrl { background: var(--card); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+    .ctrl .title { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--primary); }
+    .groups { display: flex; flex-wrap: wrap; gap: 18px; }
+    .group { flex: 1; min-width: 200px; }
+    .group .g-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    button {
+      font-size: 14px; padding: 10px 18px; margin: 0 6px 6px 0; border: none; border-radius: 10px;
+      cursor: pointer; color: #fff; transition: .15s; min-width: 80px; box-shadow: 0 2px 6px rgba(0,0,0,.12);
+    }
+    button:active { transform: scale(.95); }
+    .btn-on  { background: #2f9e44; } .btn-off { background: #e03131; }
+    .btn-open { background: #1c7ed6; } .btn-close { background: #495057; }
+    .btn-auto1 { background: #f59f00; } .btn-auto0 { background: #868e96; }
+    .status { text-align: center; margin-top: 16px; color: var(--muted); font-size: 13px; }
+
+    .pill { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 14px; color: #fff; font-weight: 600; }
+    .pill.on { background: #2f9e44; } .pill.off { background: #adb5bd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>智能家居环境中心</h1>
+        <div class="sub"><span class="dot"></span>已连接巴法云 · 实时监控中</div>
+      </div>
+    </div>
+
+    <div class="alarm-banner" id="alarm-banner" style="display:none;">报警中 · 请检查环境</div>
+
+    <div class="cards">
+      <div class="card c-temp"><div class="label">温度</div><div class="value"><span id="v-t">--</span><span class="unit">℃</span></div></div>
+      <div class="card c-hum"><div class="label">湿度</div><div class="value"><span id="v-h">--</span><span class="unit">%</span></div></div>
+      <div class="card c-light"><div class="label">光照</div><div class="value"><span id="v-light">--</span><span class="unit">%</span></div></div>
+      <div class="card c-dist"><div class="label">距离</div><div class="value"><span id="v-dist">--</span><span class="unit">cm</span></div></div>
+      <div class="card c-lamp"><div class="label">灯光</div><div class="value"><span id="v-lamp" class="pill off">--</span></div></div>
+      <div class="card c-auto"><div class="label">自动模式</div><div class="value"><span id="v-auto" class="pill off">--</span></div></div>
+      <div class="card c-fan"><div class="label">风扇</div><div class="value"><span id="v-fan" class="pill off">--</span></div></div>
+    </div>
+
+    <div class="grid">
+      <div class="panel"><div class="chart" id="chart-temp"></div></div>
+      <div class="panel"><div class="chart" id="chart-hum"></div></div>
+      <div class="panel"><div class="chart" id="chart-light"></div></div>
+      <div class="panel voice">
+        <div class="title">语音交互</div>
+        <div class="hint">可用口令：开灯 / 关灯 · 开风扇 / 关风扇 · 温度 / 湿度 · 开自动 / 关自动</div>
+        <div id="voice-body"><div class="empty">暂无语音 · 按住 ESP 按钮说话，识别与回复会实时显示在这里</div></div>
+      </div>
+    </div>
+
+    <div class="ctrl">
+      <div class="title">远程控制</div>
+      <div class="groups">
+        <div class="group">
+          <div class="g-title">灯光</div>
+          <button class="btn-on" onclick="control('lamp','on')">开灯</button>
+          <button class="btn-off" onclick="control('lamp','off')">关灯</button>
+        </div>
+        <div class="group">
+          <div class="g-title">风扇（步进电机）</div>
+          <button class="btn-open" onclick="control('fan','on')">开风扇</button>
+          <button class="btn-close" onclick="control('fan','off')">关风扇</button>
+        </div>
+        <div class="group">
+          <div class="g-title">自动灯光</div>
+          <button class="btn-auto1" onclick="control('auto','1')">开启自动</button>
+          <button class="btn-auto0" onclick="control('auto','0')">关闭自动</button>
+        </div>
+      </div>
+      <div class="status" id="status">连接中...</div>
+    </div>
+  </div>
+
+  <script>
+    function makeChart(el, name, color, max) {
+      const c = echarts.init(el);
+      c.setOption({
+        title: { text: name, left: 12, top: 4, textStyle: { fontSize: 14, color: '#2b3a4a' } },
+        tooltip: { trigger: 'axis' },
+        grid: { left: 45, right: 18, top: 38, bottom: 24 },
+        xAxis: { type: 'category', boundaryGap: false, data: [] },
+        yAxis: { type: 'value', min: 0, max: max, splitLine: { lineStyle: { color: '#eef1f6' } } },
+        series: [{
+          type: 'line', smooth: true, showSymbol: false, data: [],
+          lineStyle: { color: color, width: 2 },
+          itemStyle: { color: color },
+          areaStyle: { color: color, opacity: 0.12 }
+        }]
+      });
+      return c;
+    }
+
+    const chartTemp = makeChart(document.getElementById('chart-temp'), '温度 (℃)', '#e8590c', 50);
+    const chartHum = makeChart(document.getElementById('chart-hum'), '湿度 (%)', '#1c7ed6', 100);
+    const chartLight = makeChart(document.getElementById('chart-light'), '光照 (%)', '#f59f00', 100);
+
+    function setPill(el, on) {
+      el.className = 'pill ' + (on ? 'on' : 'off');
+      el.textContent = on ? '开' : '关';
+    }
+
+    function refreshData() {
+      fetch('/api/data').then(r => r.json()).then(data => {
+        if (!data.length) { document.getElementById('status').textContent = '等待数据...'; return; }
+        document.getElementById('status').textContent = '实时更新中 · 最近 ' + data.length + ' 条';
+        const last = data[data.length - 1];
+        document.getElementById('v-t').textContent = last.t;
+        document.getElementById('v-h').textContent = last.h;
+        document.getElementById('v-light').textContent = last.light;
+        document.getElementById('v-dist').textContent = last.dist;
+        setPill(document.getElementById('v-lamp'), last.lamp);
+        setPill(document.getElementById('v-auto'), last.auto);
+        setPill(document.getElementById('v-fan'), last.fan);
+        document.getElementById('alarm-banner').style.display = last.alarm ? 'block' : 'none';
+        const times = data.map(d => d.time);
+        chartTemp.setOption({ xAxis: { data: times }, series: [{ data: data.map(d => d.t) }] });
+        chartHum.setOption({ xAxis: { data: times }, series: [{ data: data.map(d => d.h) }] });
+        chartLight.setOption({ xAxis: { data: times }, series: [{ data: data.map(d => d.light) }] });
+      }).catch(() => { document.getElementById('status').textContent = '无法连接服务器'; });
+    }
+
+    function refreshVoice() {
+      fetch('/api/voice').then(r => r.json()).then(log => {
+        if (!log.length) return;
+        let html = '';
+        log.slice(-20).forEach(item => {   // 最近 20 条 = 10 次对话
+          const cls = item.type === 'asr' ? 'asr' : 'reply';
+          const tag = item.type === 'asr' ? '你说' : '回复';
+          const text = item.type === 'asr' ? (item.text || '（未识别）') : item.text;
+          html += '<div class="row"><span class="tag ' + cls + '">' + tag + '</span>' +
+                  '<div class="msg">' + text + ' <span class="vtime">' + item.time + '</span></div></div>';
+        });
+        document.getElementById('voice-body').innerHTML = html;
+        document.getElementById('voice-body').scrollTop = document.getElementById('voice-body').scrollHeight;
+      }).catch(() => {});
+    }
+
+    function control(dev, act) {
+      document.getElementById('status').textContent = '下发指令中...';
+      fetch('/api/control', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dev, act })
+      }).then(r => r.json()).then(res => {
+        document.getElementById('status').textContent = res.ok ? ('已发送: ' + res.cmd) : ('失败: ' + res.msg);
+        setTimeout(refreshData, 800);
+      }).catch(() => { document.getElementById('status').textContent = '发送失败'; });
+    }
+
+    setInterval(refreshData, 2000);
+    setInterval(refreshVoice, 1000);
+    refreshData();
+    refreshVoice();
+    window.addEventListener('resize', () => { chartTemp.resize(); chartHum.resize(); chartLight.resize(); });
+  </script>
+</body>
+</html>

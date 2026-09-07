@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# 运行时生成
+env_log.csv
+tts_reply.wav
+*.wav
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db

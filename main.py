@@ -81,7 +81,11 @@ def on_mqtt_connect(client, userdata, flags, rc):
         print("MQTT 连接失败 rc=", rc)
 
 
+last_alarm = 0   # 报警状态，用于检测报警跳变
+
+
 def on_mqtt_message(client, userdata, msg):
+    global last_alarm
     try:
         d = json.loads(msg.payload.decode("utf-8"))
         row = {
@@ -95,8 +99,33 @@ def on_mqtt_message(client, userdata, msg):
         with open(LOG_FILE, "a", newline="", encoding="utf-8-sig") as f:
             csv.writer(f).writerow(
                 [row["time"], row["t"], row["h"], row["light"], row["lamp"], row["auto"], row["dist"], row["alarm"], row["fan"]])
+
+        # 报警联动：报警刚触发时异步 TTS 播报
+        if row["alarm"] == 1 and last_alarm == 0:
+            print("报警触发！温湿度/距离/灯故障异常")
+            threading.Thread(target=alarm_tts, daemon=True).start()
+        last_alarm = row["alarm"]
     except Exception as e:
         print("解析失败:", e)
+
+
+def alarm_tts():
+    """报警触发时向 ESP 推送语音播报（尽力而为）"""
+    audio = tts("警报，检测到环境异常，请及时处理")
+    if not audio:
+        return
+    if not esp_ip:
+        print("（ESP IP 未知，跳过报警播报）")
+        return
+    try:
+        t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        t.settimeout(10)
+        t.connect((esp_ip, ESP_TTS_PORT))
+        t.sendall(audio)
+        t.close()
+        print("已向 ESP 推送报警语音")
+    except Exception as e:
+        print("报警语音推送失败:", e)
 
 
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=UID)   # 同 UID 多连接共存
@@ -214,7 +243,8 @@ def tts(text):
     ws = websocket.create_connection(build_url(TTS_HOST, TTS_PATH), timeout=10)
     ws.send(json.dumps({
         "common": {"app_id": APPID},
-        "business": {"aue": "raw", "auf": "audio/L16;rate=16000", "vcn": "xiaoyan", "tte": "UTF8"},
+        "business": {"aue": "raw", "auf": "audio/L16;rate=16000", "vcn": "xiaoyan", "tte": "UTF8",
+                     "volume": 70, "speed": 45, "pitch": 50},
         "data": {"status": 2, "text": base64.b64encode(text.encode()).decode()},
     }))
     audio = b""

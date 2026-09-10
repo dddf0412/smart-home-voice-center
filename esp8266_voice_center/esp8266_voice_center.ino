@@ -53,6 +53,7 @@ WiFiServer ttsServer(ESP_TTS_PORT);   // 收电脑回传的 TTS 音频（TCP，�
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 uint32_t g_lastEnvPublish = 0;
+uint32_t g_lastWifiTry = 0;
 
 const IPAddress PC_IP(192, 168, 1, 100);   // 电脑 IP（改成电脑实际 IP）
 
@@ -67,9 +68,6 @@ struct {
   int   fan = 0;
 } g_env;
 
-enum Intent { INT_NONE, LAMP_ON, LAMP_OFF, WINDOW_OPEN, WINDOW_CLOSE,
-              QUERY_TEMP, QUERY_HUM, AUTO_ON, AUTO_OFF, CHAT };
-
 enum VoiceState { ST_IDLE, ST_RECORDING };
 VoiceState g_state = ST_IDLE;
 uint32_t g_recStart = 0;
@@ -82,7 +80,7 @@ bool i2sBeginRecording() {
   bool ok = i2s_rxtx_begin(true, false);
   if (ok) i2s_set_rate(SAMPLE_RATE);
   return ok;
-}
+}   
 
 int readPCM(int16_t* buf, int maxSamples) {
   int n = 0;
@@ -140,32 +138,6 @@ void uart51Poll() {
 }
 
 void uart51Send(const char* cmd) { s51.println(cmd); }
-
-// =====================================================================
-//  意图解析
-// =====================================================================
-Intent parseIntent(const String& text) {
-  if (text.indexOf("开灯") >= 0) return LAMP_ON;
-  if (text.indexOf("关灯") >= 0) return LAMP_OFF;
-  if (text.indexOf("开窗") >= 0 || text.indexOf("开窗户") >= 0) return WINDOW_OPEN;
-  if (text.indexOf("关窗") >= 0 || text.indexOf("关窗户") >= 0) return WINDOW_CLOSE;
-  if (text.indexOf("自动") >= 0) return (text.indexOf("关") >= 0) ? AUTO_OFF : AUTO_ON;
-  if (text.indexOf("温度") >= 0 || text.indexOf("几度") >= 0 || text.indexOf("多少度") >= 0) return QUERY_TEMP;
-  if (text.indexOf("湿度") >= 0 || text.indexOf("潮") >= 0) return QUERY_HUM;
-  return CHAT;
-}
-
-void sendCommand(Intent it) {
-  switch (it) {
-    case LAMP_ON:      uart51Send("C:lamp:on");      break;
-    case LAMP_OFF:     uart51Send("C:lamp:off");     break;
-    case WINDOW_OPEN:  uart51Send("C:window:open");  break;
-    case WINDOW_CLOSE: uart51Send("C:window:close"); break;
-    case AUTO_ON:      uart51Send("C:auto:1");       break;
-    case AUTO_OFF:     uart51Send("C:auto:0");       break;
-    default: break;
-  }
-}
 
 // =====================================================================
 //  MQTT 巴法云
@@ -276,6 +248,8 @@ bool waitTextResult(String& text, uint32_t timeoutMs) {
         return true;
       }
     }
+    uart51Poll();      // 阻塞期间仍接收 51 上报
+    mqtt.loop();       // 保持 MQTT 心跳与命令接收
     yield();
     delay(5);
   }
@@ -285,27 +259,12 @@ bool waitTextResult(String& text, uint32_t timeoutMs) {
 // =====================================================================
 //  TCP 接收：边收边播 TTS 音频（TCP 自带流控，阻塞写 I2S 会反压 PC）
 // =====================================================================
-void receiveAndPlayTTS(uint32_t timeoutMs) {
+// 从已建立的 TCP 连接播放 TTS 音频（阻塞，直到播完或超时）
+void playTtsStream(WiFiClient& client, uint32_t timeoutMs) {
   static int16_t chunk[513];   // 512 样本 + 1 字节 spare 空间
   uint8_t* bytes = (uint8_t*)chunk;
   int spare = 0;               // 残留的单个字节数（0 或 1）
-
-  // 丢弃之前积压的旧连接，避免播上一句的音频
-  WiFiClient stale = ttsServer.available();
-  while (stale) {
-    stale.stop();
-    stale = ttsServer.available();
-  }
-
-  // 等 PC 的 TCP 连接
-  uint32_t t0 = millis();
-  WiFiClient client = ttsServer.available();
-  while (!client && millis() - t0 < timeoutMs) {
-    client = ttsServer.available();
-    yield();
-    delay(1);
-  }
-  if (!client) return;   // 没等到连接
+  uint32_t lastPoll = 0;       // 上次处理串口/MQTT 的时间（节流用）
 
   i2sBeginPlayback();
   uint32_t t1 = millis();
@@ -321,8 +280,13 @@ void receiveAndPlayTTS(uint32_t timeoutMs) {
       spare = total & 1;                     // 是否残留单字节
       if (spare) bytes[0] = bytes[total - 1]; // 残留字节移到开头，下次拼接
     } else {
+      // 节流：每 50ms 才处理一次串口/MQTT，降低对 I2S 时序的干扰
+      if (millis() - lastPoll > 50) {
+        lastPoll = millis();
+        uart51Poll();
+        mqtt.loop();
+      }
       yield();
-      delay(1);
     }
     if (millis() - t1 > timeoutMs) break;   // 长时间无数据则结束
   }
@@ -332,6 +296,35 @@ void receiveAndPlayTTS(uint32_t timeoutMs) {
   while (!i2s_is_empty() && millis() - t2 < 500) { yield(); delay(1); }
   client.stop();
   i2s_end();
+}
+
+void receiveAndPlayTTS(uint32_t timeoutMs) {
+  // 丢弃之前积压的旧连接，避免播上一句的音频
+  WiFiClient stale = ttsServer.available();
+  while (stale) {
+    stale.stop();
+    stale = ttsServer.available();
+  }
+
+  // 等 PC 的 TCP 连接
+  uint32_t t0 = millis();
+  WiFiClient client = ttsServer.available();
+  while (!client && millis() - t0 < timeoutMs) {
+    client = ttsServer.available();
+    uart51Poll();
+    mqtt.loop();
+    yield();
+    delay(1);
+  }
+  if (!client) return;   // 没等到连接
+  playTtsStream(client, timeoutMs);
+}
+
+// 非阻塞检查：若有 PC 推送的 TTS（如报警播报），立即播放
+void checkPushTTS() {
+  WiFiClient client = ttsServer.available();
+  if (!client) return;
+  playTtsStream(client, 15000);
 }
 
 // =====================================================================
@@ -345,7 +338,13 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) delay(500);
+  {
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(500);
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    blinkLed(8);   // WiFi 连接失败：D4 快闪 8 下提示（loop 里会持续重连）
+  }
 
   udpAudio.begin(5008);        // 本地端口（发音频用）
   udpText.begin(ESP_TEXT_PORT); // 收识别文字
@@ -373,6 +372,12 @@ void loop() {
   uart51Poll();
 #endif
 
+  // WiFi 断线重连（每 5 秒尝试一次）
+  if (WiFi.status() != WL_CONNECTED && millis() - g_lastWifiTry > 5000) {
+    g_lastWifiTry = millis();
+    WiFi.reconnect();
+  }
+
   // MQTT 保活
   if (!mqtt.connected()) {
     mqttConnect();
@@ -388,14 +393,18 @@ void loop() {
 
   bool pressed = (digitalRead(PIN_BTN) == LOW);
 
-  if (g_state == ST_IDLE && pressed) {
-    dbgln("[btn]");
-    blinkLed(1);
-    g_state = ST_RECORDING;
-    i2sBeginRecording();
-    g_recStart = millis();
-    sendEnvToPc();             // 回传环境数据给电脑（供语音查询）
-    blinkLed(2);               // 提示：开始说话
+  if (g_state == ST_IDLE) {
+    if (pressed) {
+      dbgln("[btn]");
+      blinkLed(1);
+      g_state = ST_RECORDING;
+      i2sBeginRecording();
+      g_recStart = millis();
+      sendEnvToPc();             // 回传环境数据给电脑（供语音查询）
+      blinkLed(2);               // 提示：开始说话
+    } else {
+      checkPushTTS();            // 空闲时检查 PC 推送的报警播报
+    }
   }
 
   if (g_state == ST_RECORDING) {

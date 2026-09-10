@@ -180,7 +180,7 @@
         document.getElementById('v-t').textContent = last.t;
         document.getElementById('v-h').textContent = last.h;
         document.getElementById('v-light').textContent = last.light;
-        document.getElementById('v-dist').textContent = last.dist;
+        document.getElementById('v-dist').textContent = (last.dist >= 65535) ? '—' : last.dist;
         setPill(document.getElementById('v-lamp'), last.lamp);
         setPill(document.getElementById('v-auto'), last.auto);
         setPill(document.getElementById('v-fan'), last.fan);

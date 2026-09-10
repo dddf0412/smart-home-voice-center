@@ -50,8 +50,8 @@ sbit XP_DOUT = P3^5;  /* XPT2046 数据输出 */
 #define FAN_TEMP_OFF  27    /* 温度 <27 自动关风扇 */
 #define FAN_HUM_ON    80    /* 湿度 >80 自动开风扇 */
 #define FAN_HUM_OFF   65    /* 湿度 <65 自动关风扇 */
-#define FAN_SPEED_MS  2     /* 风扇每步延时 */
-#define SENSE_TICKS   40    /* 40 × 50ms = 2s 采集/上报周期 */
+#define FAN_SPEED_MS  2     /* 风扇每步延时 = Timer0 周期 */
+#define SENSE_TICKS   1000  /* 1000 × 2ms = 2s 采集/上报周期 */
 #define DIST_ALARM_CM 10
 #define DIST_NO_ECHO  0xFFFF
 
@@ -72,7 +72,7 @@ unsigned char rx_len = 0;
 bit rx_ready = 0, tx_busy = 0;
 
 /* 定时 */
-volatile unsigned char tick50 = 0;
+volatile unsigned int tick2ms = 0;
 bit sense_flag = 0;
 
 /* ============ 延时（12MHz 校准） ============ */
@@ -148,17 +148,20 @@ void uart_send(unsigned char c) {
 }
 void uart_send_str(unsigned char *s) { while (*s) uart_send(*s++); }
 
-/* ============ 定时器0（50ms） ============ */
+void fan_drive(void);   /* 风扇驱动（定时器中断里调用，需前置声明） */
+
+/* ============ 定时器0（2ms，驱动风扇 + 采集计数） ============ */
 void timer0_init(void) {
   TMOD = 0x11;   /* Timer0/Timer1 均模式1（Timer1 用于测距计时） */
-  TH0 = 0x3C; TL0 = 0xB0;   /* 50ms @ 12MHz */
+  TH0 = 0xF8; TL0 = 0x30;   /* 2ms @ 12MHz（65536-2000） */
   ET0 = 1;
   TR0 = 1;
 }
 void timer0_isr(void) interrupt 1 {
-  TH0 = 0x3C; TL0 = 0xB0;
-  tick50++;
-  if (tick50 >= SENSE_TICKS) { tick50 = 0; sense_flag = 1; }
+  TH0 = 0xF8; TL0 = 0x30;
+  fan_drive();               /* 每 2ms 步进一次，风扇不受主循环阻塞影响 */
+  tick2ms++;
+  if (tick2ms >= SENSE_TICKS) { tick2ms = 0; sense_flag = 1; }
 }
 
 /* ============ XPT2046（SPI ADC） ============ */
@@ -322,7 +325,7 @@ void report(void) {
   uart_send_str(buf);
 
   p = 0; buf[p++] = 'R'; buf[p++] = ':';
-  p += num_str((g_dist == DIST_NO_ECHO) ? 0 : g_dist, buf + p);
+  p += num_str((g_dist == DIST_NO_ECHO) ? 65535 : g_dist, buf + p);
   buf[p++] = '\n'; buf[p] = 0;
   uart_send_str(buf);
 
@@ -422,7 +425,5 @@ void main(void) {
   while (1) {
     if (rx_ready) { process_command(rx_line); rx_ready = 0; rx_len = 0; }
     if (sense_flag) { sense_flag = 0; sense_and_control(); }
-    fan_drive();
-    delay_ms(FAN_SPEED_MS);   /* 风扇转速 */
   }
 }
